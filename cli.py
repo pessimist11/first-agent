@@ -22,7 +22,16 @@ from langchain_core.messages import AIMessageChunk
 from agent import MODEL, build_agent
 from tools import TOOLS
 
-GRAY, CYAN, YELLOW, DIM, RESET = "\033[90m", "\033[36m", "\033[33m", "\033[2m", "\033[0m"
+import subagent
+
+GRAY, CYAN, YELLOW, DIM, MAGENTA, RESET = (
+    "\033[90m",
+    "\033[36m",
+    "\033[33m",
+    "\033[2m",
+    "\033[35m",
+    "\033[0m",
+)
 
 
 def text_of(chunk) -> str:
@@ -117,7 +126,8 @@ def main() -> None:
     print("=" * 62)
     print(" LangChain 轻量 Agent   模型: %s   线程: %s" % (MODEL, thread_id))
     print(" 工具: %s" % "、".join(t.name for t in TOOLS))
-    print(" 命令: /new 开新会话   /exit 退出   Ctrl-C 中断本轮")
+    print(" 子 agent 工具: %s" % "、".join(t.name for t in subagent.PARENT_TOOLS))
+    print(" 命令: /new 开新会话   /exit 退出   Ctrl-C 中断本轮   /agents 看子 agent")
     print("=" * 62)
 
     while True:
@@ -138,12 +148,20 @@ def main() -> None:
             print("已开新会话：%s" % thread_id)
             continue
 
+        if user_text == "/agents":
+            print(subagent.list_subagents.invoke({}))
+            continue
+
         try:
             run_turn(agent, config, user_text, show_thinking=not args.no_thinking)
         except KeyboardInterrupt:
             print("\n[已中断本轮]")
         except Exception as exc:  # 网络/接口报错不该让整个 CLI 挂掉
             print("\n[出错] %s: %s" % (type(exc).__name__, exc), file=sys.stderr)
+
+        # 把后台 subagent 的完成通知打出来（推式通知，不做轮询）
+        for event in subagent.drain_events():
+            print("%s  %s%s" % (MAGENTA, event, RESET))
 
 
 if __name__ == "__main__":

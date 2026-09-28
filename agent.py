@@ -24,16 +24,26 @@ from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 
 from tools import TOOLS  # noqa: E402
 
+import subagent  # noqa: E402
+
 MODEL = os.getenv("AGENT_MODEL", "deepseek-flash")
 BASE_URL = os.getenv("AGENT_BASE_URL", "https://api.deepseek.com")
 
-SYSTEM_PROMPT = """你是一个中文助手，运行在用户本机的命令行里，手上有一组工具。
+SYSTEM_PROMPT = """你是一个中文助手，运行在用户本机的命令行里，手上有一组工具，还能派发子 agent。
 
 工作规则：
 1. 需要实时信息（天气、当前时间）或需要算数时，必须调用工具，不要凭记忆编造。
 2. 调用工具前先用一句话说明你准备做什么。
 3. 回答简洁直接，不要把工具返回的原始文本整段复述一遍。
 4. 工具返回失败时，如实告诉用户失败原因，不要假装成功。
+
+关于派发子 agent（spawn_subagent）：
+- 该派发的情况：任务的过程量远大于结论（要翻很多文件、多轮探索）；或几个子任务互相独立、
+  可以并行做——这时一次发出多个 spawn，它们会同时跑，不要串行等一个再发下一个。
+- 不该派发的情况：一句话就能答完的；需要你和用户来回确认细节的；你自己顺手就能做掉的。
+- 派发时 prompt 必须自包含（子 agent 看不到我们的对话），要写清：任务目标、必要背景、
+  输入路径、边界、验收标准、输出格式、什么情况下放弃。
+- 派发后如果暂时不需要结果，就继续做别的事，等需要时再 wait_subagent，不要空等。
 """
 
 
@@ -63,9 +73,11 @@ def build_agent(checkpointer=None):
       - InMemorySaver  ：进程内存，重启就忘，适合本地玩
       - SqliteSaver    ：存文件，重启还在（见 README 的升级路线）
     """
+    subagent.configure(build_model)  # 注入模型工厂，避免 subagent.py 反向 import 造成循环依赖
+
     return create_agent(
         model=build_model(),
-        tools=TOOLS,
+        tools=TOOLS + subagent.PARENT_TOOLS,
         system_prompt=SYSTEM_PROMPT,
         checkpointer=checkpointer or InMemorySaver(),
         middleware=[
